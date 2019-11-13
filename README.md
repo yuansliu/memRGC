@@ -10,7 +10,7 @@ Memrgc is a tool for compression genome sequence. The program is written in C++1
 
 ## Usage
 
-	./memrgc &lt;e|d> -m &lt;mode> -r &lt;reference> -t &lt;target> -o &lt;output> [options]
+	./memrgc <e|d> -m <mode> -r <reference> -t <target> -o <output> [options]
 
 	-m  	mode; 'file' compress a single file; 'genome' compress a genome
 	-r  	reference file or genome
@@ -21,4 +21,4 @@ Memrgc is a tool for compression genome sequence. The program is written in C++1
 	-h  	print help message
 
 ## Contacts
-If any bugs during you run our code, please email to <Yuansheng.Liu@uts.edu.au>
+If any bugs during you run our code, please email to <Yuansheng.Liu@uts.edu.au> or <yyuanshengliu@gmail.com>
