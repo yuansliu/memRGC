@@ -21,7 +21,7 @@ Two fasta files are stored in testData.
 	-r  	reference file or genome
 	-t  	target file or genome
 	-o  	the output file
-	-f  	use to set the file name; each line contain two file names
+	-f  	use to set the file name; each line contain two file names, i.e., the reference and the target
 	-n  	the number of threads
 	-h  	print help message
 
