@@ -7,6 +7,10 @@ Memrgc is a tool for compression genome sequence. The program is written in C++1
 	git clone https://github.com/yuansliu/memrgc.git
 	cd memrgc
 	make
+## Test
+
+Two fasta files are stored in testData.
+	sh runtest.sh
 
 ## Usage
 
