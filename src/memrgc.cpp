@@ -50,6 +50,10 @@ typedef struct match_t {
 
 typedef struct { size_t n, m; match_t *a; } match_v;
 
+/* this function is from readMultiFasta() in https://github.com/wbieniec/copmem/blob/master/CopMEM.src/CopMEM.cpp
+ * authors: Szymon Grabowski and Wojciech Bieniecki
+ * changes: change it to reads chromosome
+ */
 Chromosome readChr(string fn, const char paddingChar = 123) {
 	// const char terminatorChar = 0;
 	// const char paddingChar = 125;
@@ -841,12 +845,20 @@ void compressChr(string reffn, string tarfn, string objfn) {
 	char *targen = std::get<1>(tar) + 1;
 
 	if (refSeqSize == tarSeqSize && memcmp((void*)refgen, (void*)targen, refSeqSize - 1) == 0) {
+		// cout << "The same\n";
 		string comstr;
 		comstr.reserve((1<<8));
-		comstr.append(std::string(std::get<0>(tar)) + "\n");
+		if (strcmp(std::get<0>(tar), std::get<0>(ref)) == 0) {
+			comstr.append("0\n"); // meta data is the same
+		} else 
+			comstr.append(std::string(std::get<0>(tar)) + "\n");
 
 		int lineLength = getLineLength(tarfn);	
-		comstr.append(to_string(lineLength) + "\n3\n");
+		if (lineLength == getLineLength(reffn)) {
+			comstr.append("0\n");
+		} else 
+			comstr.append(to_string(lineLength) + "\n");
+		comstr.append("3\n");
 
 		std::ofstream fres;
 		fres.open(objfn);
@@ -896,7 +908,8 @@ void compressChr(string reffn, string tarfn, string objfn) {
 
 		// smap.clear();
 		delStrMap(&smap);	
-	} else {
+	} else 
+	if (tarSeqSize > (1UL<<21)) {
 		K = 90;
 		step = 500;
 		// first find very long matches 
@@ -923,47 +936,98 @@ void compressChr(string reffn, string tarfn, string objfn) {
 		delStrMap(&smap);
 	}
 	
+	// cout << "tarSeqSize: " << tarSeqSize << endl;
 	// cout << "smap.size(): " << smap.size() << endl;
 	// #ifdef false
-	do {
-		// 2^14 = 16384
-		if (countMEMBases(&tar, v) < (1UL<<14)) break;
+	if (tarSeqSize > (1UL<<21)) {
+		do {
+			// 2^14 = 16384
+			if (countMEMBases(&tar, v) < (1UL<<14)) break;
+			K = 30; ///????
+			step = 51;
+			constrctStrMap(&ref, &smap, step, K);
+
+			findMEMs(v, &ref, &tar, &smap, &mh, 49, 49*step + K - 1, K); // 2528
+			sort(mh.a, mh.a + mh.n);
+			travelMEMs(&tar, v, &mh);
+			kv_destroy(mh);
+			MEMsExtend(v, &ref, &tar);
+
+			if (countMEMBases(&tar, v) < (1UL<<14)) break;
+
+			findMEMs(v, &ref, &tar, &smap, &mh, 16, 16*step + K - 1, K); // 845
+			sort(mh.a, mh.a + mh.n);
+			travelMEMs(&tar, v, &mh);
+			kv_destroy(mh);
+			MEMsExtend(v, &ref, &tar);
+
+			if (countMEMBases(&tar, v) < (1UL<<14)) break;
+
+			findMEMs(v, &ref, &tar, &smap, &mh, 7, 7*step + K - 1, K); // 386
+			sort(mh.a, mh.a + mh.n);
+			travelMEMs(&tar, v, &mh);
+			kv_destroy(mh);
+			MEMsExtend(v, &ref, &tar);
+
+			if (countMEMBases(&tar, v) < (1UL<<14)) break;
+
+			findMEMs(v, &ref, &tar, &smap, &mh, 1, 1*step + K - 1, K); // 80
+			sort(mh.a, mh.a + mh.n);
+			travelMEMs(&tar, v, &mh);
+			kv_destroy(mh);
+			MEMsExtend(v, &ref, &tar);
+
+			delStrMap(&smap);
+		} while(0);
+	} else {
 		K = 30; ///????
 		step = 51;
 		constrctStrMap(&ref, &smap, step, K);
 
-		findMEMs(v, &ref, &tar, &smap, &mh, 49, 49*step + K - 1, K); // 2528
+		findMEMs(v, &ref, &tar, &smap, &mh, 40, 40*step + K - 1, K); // 2528
 		sort(mh.a, mh.a + mh.n);
+		// cout << "mh.n: " << mh.n << endl;
 		travelMEMs(&tar, v, &mh);
 		kv_destroy(mh);
-		MEMsExtend(v, &ref, &tar);
+		// MEMsExtend(v, &ref, &tar);
 
-		if (countMEMBases(&tar, v) < (1UL<<14)) break;
-
-		findMEMs(v, &ref, &tar, &smap, &mh, 16, 16*step + K - 1, K); // 845
+		findMEMs(v, &ref, &tar, &smap, &mh, 13, 13*step + K - 1, K); // 845
 		sort(mh.a, mh.a + mh.n);
+		// cout << "mh.n: " << mh.n << endl;
 		travelMEMs(&tar, v, &mh);
 		kv_destroy(mh);
-		MEMsExtend(v, &ref, &tar);
+		// MEMsExtend(v, &ref, &tar);
 
-		if (countMEMBases(&tar, v) < (1UL<<14)) break;
-
-		findMEMs(v, &ref, &tar, &smap, &mh, 7, 7*51 + K - 1, K); // 386
+		findMEMs(v, &ref, &tar, &smap, &mh, 1, 1*step + K - 1, K); // 845
 		sort(mh.a, mh.a + mh.n);
-		travelMEMs(&tar, v, &mh);
-		kv_destroy(mh);
-		MEMsExtend(v, &ref, &tar);
-
-		if (countMEMBases(&tar, v) < (1UL<<14)) break;
-
-		findMEMs(v, &ref, &tar, &smap, &mh, 1, 1*51 + K - 1, K); // 80
-		sort(mh.a, mh.a + mh.n);
+		// cout << "mh.n: " << mh.n << endl;
 		travelMEMs(&tar, v, &mh);
 		kv_destroy(mh);
 		MEMsExtend(v, &ref, &tar);
 
 		delStrMap(&smap);
-	} while(0);
+
+		K = 20; ///????
+		step = 7;
+		constrctStrMap(&ref, &smap, step, K);
+
+		findMEMs(v, &ref, &tar, &smap, &mh, 5, 5*step + K - 1, K); // 386
+		sort(mh.a, mh.a + mh.n);
+		// cout << "mh.n: " << mh.n << endl;
+		travelMEMs(&tar, v, &mh);
+		kv_destroy(mh);
+		// MEMsExtend(v, &ref, &tar);
+
+		findMEMs(v, &ref, &tar, &smap, &mh, 1, 1*step + K - 1, K); // 386
+		sort(mh.a, mh.a + mh.n);
+		// cout << "mh.n: " << mh.n << endl;
+		travelMEMs(&tar, v, &mh);
+		kv_destroy(mh);
+		// MEMsExtend(v, &ref, &tar);
+
+		delStrMap(&smap);
+	}
+
 
 	// 262144
 	size_t cntbases = countMEMBases(&tar, v);
@@ -978,18 +1042,23 @@ void compressChr(string reffn, string tarfn, string objfn) {
 			step = 5;
 		}
 
+		// if (tarSeqSize <= (1UL << 21)) {
+		// 	K = 15, step = 5;
+		// }
+		// cout << "K: " << K << "; step: " << step << endl;
+
 		constrctStrMap(&ref, &smap, step, K);
 
 		findMEMs(v, &ref, &tar, &smap, &mh, 1, 1*step + K - 1, K); // 54
+		// cout << "mh.n: " << mh.n << endl;
 		sort(mh.a, mh.a + mh.n);
 		travelMEMs(&tar, v, &mh);
 		kv_destroy(mh);
 		MEMsExtend(v, &ref, &tar);
 
 		delStrMap(&smap);
-	}
 
-	// cout << "-----------------------\n";
+	}
 
 	string e0;
 	e0.reserve((1UL<<22));
@@ -1005,7 +1074,12 @@ void compressChr(string reffn, string tarfn, string objfn) {
 	
 	string comstr;
 	comstr.reserve((1<<14));
-	comstr.append(std::string(std::get<0>(tar)) + "\n");
+
+	if (strcmp(std::get<0>(tar), std::get<0>(ref)) == 0) {
+		// cout << "meta data is the same\n";
+		comstr.append("0\n"); // meta data is the same
+	} else 
+		comstr.append(std::string(std::get<0>(tar)) + "\n");
 	// cout << "comstr: " << comstr << endl;
 
 	string e1;
@@ -1015,7 +1089,10 @@ void compressChr(string reffn, string tarfn, string objfn) {
 	std::ofstream fres;
 	fres.open(objfn);
 
-	comstr.append(to_string(lineLength) + "\n");
+	if (lineLength == getLineLength(reffn)) {
+		comstr.append("0\n");
+	} else 
+		comstr.append(to_string(lineLength) + "\n");
 	// cout << "lineLength: " << lineLength << endl;
 
 	if (upperCaseString.size() + e0.size() < e1.size()) { 
@@ -1037,10 +1114,11 @@ void compressChr(string reffn, string tarfn, string objfn) {
 	delete[] v;
 	deleteChr(ref);
 	deleteChr(tar);
+	// cout << "-----------------------\n";
 	// cout << "Time of total = " << allstopwatch.stop() << std::endl;
 }
 
-void decompressChr(string reffn, string tarfn, string objfn) {
+int decompressChr(string reffn, string tarfn, string objfn) {
 	const char eolChar1 = 10;
 	const char eolChar2 = 13;
 
@@ -1056,11 +1134,17 @@ void decompressChr(string reffn, string tarfn, string objfn) {
 	FILE *fp = fopen(tarfn.c_str(), "r");
 
 	fgets(line, maxnum, fp);
-	fprintf(fpout, "%s", line);
+	if (line[0] == '0') {
+		fprintf(fpout, "%s\n", std::get<0>(ref));
+	} else 
+		fprintf(fpout, "%s", line);
 	// cout << "line: " << line << endl;
 
 	int lineLength, method;
 	fscanf(fp, "%d", &lineLength);
+	if (lineLength == 0) {
+		lineLength = getLineLength(reffn);
+	}
 	// cout << "lineLength: " << lineLength << endl;
 	fscanf(fp, "%d", &method);
 	// cout << "method: " << method << endl;
@@ -1272,7 +1356,7 @@ void decompressChr(string reffn, string tarfn, string objfn) {
 
 inline void show_usage(const char* prog) {
 	printf("memrgc v0.1, by Yuansheng Liu, November 2019.\n");
-	printf("Usage: %s <e|d> -m <mode> -r <reference> -t <target> -o <output> [options]\n", prog);
+	printf("Usage: %s <e|d> -m <mode> -r <reference> -t <target> -o <output> [option parameters]\n", prog);
 	// printf("\t options:\n \t\t -f <.fastq> -t <threads>\n\n");
 	// printf("-----------\n");
 	printf("  -m mode; `file' compress a single file; `genome' compress a genome\n");
@@ -1295,6 +1379,8 @@ vector<string> dnlref = {"chr1.fa", "chr2.fa", "chr3.fa", "chr4.fa", //default c
                     "chr5.fa", "chr6.fa", "chr7.fa", "chr8.fa", "chr9.fa", "chr10.fa", 
                     "chr11.fa", "chr12.fa", "chr13.fa", "chr14.fa", "chr15.fa", "chr16.fa", "chr17.fa", 
                     "chr18.fa", "chr19.fa", "chr20.fa", "chr21.fa", "chr22.fa", "chrX.fa", "chrY.fa"};
+
+// vector<string> dnlref = {"chr1.fa", "chr2.fa"};
 
 vector<string> dnltar;
 int nthreads = 1;
@@ -1514,14 +1600,13 @@ int compress(int argc, char *argv[]) {
 		}
 
 		if (numcomp == 0) {
-			fprintf(stdout, "No files exist. Compress nothing.\n");
+			fprintf(stdout, "No files exist. Compress nothing.\n", tarfn.c_str());
 			exit(0);
 		}
 
-		// the target file is not an existing folder
 		tmpdir = opendir(objfn.c_str());
 		if (NULL != tmpdir) {
-			fprintf(stderr, "Cannot save to the output file '%s'.\n", objfn.c_str());
+			fprintf(stderr, "The output file '%s' can not be created.\n");
 			exit(1);
 		}
 		closedir(tmpdir);
@@ -1534,10 +1619,10 @@ int compress(int argc, char *argv[]) {
 		}
 		fo.close();
 
-		objfd = generateString("memrgc_comp", 10);
+		objfd = generateString("memrgc", 10);
 		// cout << objfd << endl;
 
-		int ret = mkdir(objfd.c_str(), MODE);//create folder
+		int ret = mkdir(objfd.c_str(), MODE);//创建目录
 	    if (ret != 0) {
 			fprintf(stderr, "Create template folder failed!\n");
 			exit(1);
