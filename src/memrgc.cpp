@@ -50,10 +50,6 @@ typedef struct match_t {
 
 typedef struct { size_t n, m; match_t *a; } match_v;
 
-/* this function is from readMultiFasta() in https://github.com/wbieniec/copmem/blob/master/CopMEM.src/CopMEM.cpp
- * authors: Szymon Grabowski and Wojciech Bieniecki
- * changes: change it to reads chromosome
- */
 Chromosome readChr(string fn, const char paddingChar = 123) {
 	// const char terminatorChar = 0;
 	// const char paddingChar = 125;
@@ -1359,7 +1355,7 @@ inline void show_usage(const char* prog) {
 	printf("Usage: %s <e|d> -m <mode> -r <reference> -t <target> -o <output> [option parameters]\n", prog);
 	// printf("\t options:\n \t\t -f <.fastq> -t <threads>\n\n");
 	// printf("-----------\n");
-	printf("  -m mode; `file' compress a single file; `genome' compress a genome\n");
+	printf("  -m mode; `file' compress a single file; `genome' compress a genome; `set' compress a set of genome\n");
 	printf("  -r reference file or genome\n");
 	printf("  -t target file or genome\n");
 	printf("  -o the output file\n");
@@ -1371,8 +1367,10 @@ inline void show_usage(const char* prog) {
 	printf("\n");
 	printf("./memrgc e -m file -r HG38/chr1.fa -t HG17/chr1.fa -o HG17chr1_ref_HG38chr1.memrgc\n");
 	printf("./memrgc e -m genome -r HG38 -t HG17 -o HG17_ref_HG38.memrgc\n");
+	printf("./memrgc e -m set -r HG38 -t genome50.txt -o genome50_ref_HG38.memrgc\n");
 	printf("./memrgc d -m file -r HG38/chr1.fa -t HG17chr1_ref_HG38chr1.memrgc -o HG17_chr1_dec.fa\n");
-	printf("./memrgc d -m genome -r HG38 -t HG17_ref_HG38.memrgc -o HG17_dec\n\n");
+	printf("./memrgc d -m genome -r HG38 -t HG17_ref_HG38.memrgc -o HG17_dec\n");
+	printf("./memrgc d -m set -r HG38 -t genome50_ref_HG38.memrgc -o genome50_dec\n\n");
 }
 
 vector<string> dnlref = {"chr1.fa", "chr2.fa", "chr3.fa", "chr4.fa", //default chr name list
@@ -1387,6 +1385,25 @@ int nthreads = 1;
 bool *iscomp, *isdecomp;
 int aid, dnlrefsize;
 string reffd, tarfd, objfd;
+vector<string> tarsets;
+
+bool getList(string &list_file, vector<string> &name_list) {
+	FILE *fp = fopen(list_file.c_str(), "r");
+	if (fp == NULL) {
+		printf("%s open fail!\n", list_file);
+		return false;
+	}
+	char str[1024];
+	while (fscanf(fp, "%s", str) != EOF) {
+		name_list.push_back(string(str));
+	}
+	fclose(fp);
+	if (name_list.size() == 0) {
+		printf("%s is empty!\n", list_file);
+		return false;
+	}
+	return true;
+}
 
 void multiTheradsCompressFun() {
 	string reffn, tarfn, objfn;
@@ -1410,6 +1427,35 @@ inline void multiTheradsCompress() {
 	}
 	for (int i = 0; i < nthreads; ++i) {
 		threadVec.push_back(std::thread(multiTheradsCompressFun));
+	}
+	std::for_each(threadVec.begin(), threadVec.end(), [](std::thread & thr) {
+		thr.join();
+	});
+	threadVec.clear();
+}
+
+void multiTheradsCompressSetFun() {
+	string reffn, tarfn, objfn;
+	while (true) {
+		int i = __sync_fetch_and_add(&aid, 1);
+		if (i >= dnlrefsize) break;
+		if (!iscomp[i]) continue;
+
+		reffn = reffd + "/" + dnlref[i];
+		tarfn = tarfd + "/" + dnltar[i];
+		objfn = objfd + "/" + dnltar[i] + "/" + tarfd;
+		compressChr(reffn, tarfn, objfn);
+	}
+}
+
+inline void multiTheradsCompressSet() {
+	aid = 0;
+	std::vector<thread> threadVec;
+	if (dnlrefsize < nthreads) {
+		nthreads = dnlrefsize;
+	}
+	for (int i = 0; i < nthreads; ++i) {
+		threadVec.push_back(std::thread(multiTheradsCompressSetFun));
 	}
 	std::for_each(threadVec.begin(), threadVec.end(), [](std::thread & thr) {
 		thr.join();
@@ -1653,8 +1699,177 @@ int compress(int argc, char *argv[]) {
 
 		cmd = "rm -rf " + objfd + ".tar";	
 		system(cmd.c_str());
-	} else {
-		fprintf(stderr, "the value of m is not correct. only `file' and `genome' can be set.\n");
+	} 
+	if (mode == "set") {
+		while ((oc = getopt(argc, argv, "er:t:o:f:n:h")) >= 0) {
+			switch(oc) {
+				case 'e':
+					break;
+				case 'r':
+					reffd = optarg;
+					isref = true;
+					break;
+				case 't':
+					tarfn = optarg;
+					istar = true;
+					break;
+				case 'o':
+					fobjfn = optarg;
+					isobj = true;
+					break;
+				case 'f':
+					namefn = optarg;
+					isnamefn = true;
+					break;
+				case 'n':
+					nthreads = atoi(optarg);
+					break;
+				case 'h':
+					show_usage(argv[0]);
+					exit(0);
+				case '?':
+					fprintf(stderr, "Error parameters!\n");
+					exit(1);
+			}
+		}
+
+		if (!isref || !istar || !isobj) {
+			fprintf(stderr, "Required parameters are not provided!\n");
+			exit(1);
+		}
+
+		// check the folder
+		DIR *tmpdir = opendir(reffd.c_str());
+		if (NULL == tmpdir) {
+			fprintf(stderr, "Reference folder '%s' does not exist.\n", reffd.c_str());
+			exit(1);
+		}
+		closedir(tmpdir);
+
+		if (!getList(tarfn, tarsets)) {
+			fprintf(stderr, "Open the target set file '%s' fail (not exist or empty file).\n", tarfn.c_str());
+			exit(1);
+		}
+
+		if (isnamefn) {
+			dnlref.clear();
+			char *str0 = new char[1024], *str1 = new char[1024];
+			FILE *fpn = fopen(namefn.c_str(), "r");
+			while (fscanf(fpn, "%s%s", str0, str1) != EOF) {
+				dnlref.push_back(str0);
+				dnltar.push_back(str1);
+			}
+			fclose(fpn);
+			delete[] str0;
+			delete[] str1;
+		} else {
+			for (size_t i = 0; i < dnlref.size(); ++i) {
+				dnltar.push_back(dnlref[i]);
+			}
+		}
+
+
+		tmpdir = opendir(objfn.c_str());
+		if (NULL != tmpdir) {
+			fprintf(stderr, "The output file '%s' can not be created.\n");
+			exit(1);
+		}
+		closedir(tmpdir);
+
+		std::ofstream fo;
+		fo.open(fobjfn);
+		if (fo.fail()) {
+			fprintf(stderr, "The output file '%s' can not be created.\n", fobjfn.c_str());
+			exit(1);
+		}
+		fo.close();
+
+		objfd = generateString("memrgc", 10);
+		// cout << objfd << endl;
+
+		int ret = mkdir(objfd.c_str(), MODE);//
+	    if (ret != 0) {
+			fprintf(stderr, "Create template folder failed!\n");
+			exit(1);
+	    }
+
+		for (size_t i = 0; i < dnltar.size(); ++i) {
+			int ret = mkdir((objfd + "/" + dnltar[i]).c_str(), MODE);//
+		    if (ret != 0) {
+				fprintf(stderr, "Create template folder failed!\n");
+				exit(1);
+		    }
+		}
+
+		FILE *fplist = fopen((objfd + "/list").c_str(), "w");
+
+		iscomp = new bool[dnlref.size()];
+		for (size_t t = 0; t < tarsets.size(); ++t) {
+			tarfd = tarsets[t];
+			fprintf(fplist, "%s\n", tarfd.c_str());
+
+			tmpdir = opendir(tarfd.c_str());
+			if (NULL == tmpdir) {
+				fprintf(stderr, "Target folder '%s' does not exist. It is ignored.\n", tarfd.c_str());
+				continue;
+			}
+			closedir(tmpdir);
+
+			int numcomp = 0;
+			// check all files
+			for (size_t i = 0; i < dnlref.size(); ++i) {
+				iscomp[i] = true;
+				reffn = reffd + "/" + dnlref[i];
+				f.open(reffn);
+				if (f.fail()) {
+					fprintf(stdout, "The reference file '%s' does not exist. This chromosome is ignored.\n", reffn.c_str());
+					iscomp[i] = false;
+				} else {
+					f.close();
+				}
+				if (iscomp[i]) {
+					tarfn = tarfd + "/" + dnltar[i];
+					f.open(tarfn);
+					if (f.fail()) {
+						fprintf(stdout, "The target file '%s' does not exist. This chromosome is ignored.\n", tarfn.c_str());
+						iscomp[i] = false;
+					} else {
+						f.close();
+					}
+				}
+				if (iscomp[i]) ++ numcomp;
+			}
+
+		    dnlrefsize = dnlref.size();
+			if (nthreads == 1) {
+				for (size_t i = 0; i < dnlrefsize; ++i) {
+					if (iscomp[i]) {
+						// objfn
+						reffn = reffd + "/" + dnlref[i];
+						tarfn = tarfd + "/" + dnltar[i];
+						objfn = objfd + "/" + dnltar[i] + "/" + tarfd;
+						compressChr(reffn, tarfn, objfn);
+					}
+				}
+			} else {
+				multiTheradsCompressSet();
+			}
+		}
+		fclose(fplist);
+		
+		string tarcmd = "tar -cf " + objfd + ".tar -C " + objfd + " . ";
+		system(tarcmd.c_str());
+
+		string cmd = "rm -rf " + objfd;	
+		system(cmd.c_str());
+
+		memrgc::bsc::BSC_compress((objfd + ".tar").c_str(), fobjfn.c_str(), 256);
+
+		cmd = "rm -rf " + objfd + ".tar";	
+		system(cmd.c_str());
+	}
+	else {
+		fprintf(stderr, "the value of m is not correct. only `file', `genome' and `set' can be set.\n");
 		exit(1);
 	}
 	return 0;
@@ -1851,8 +2066,139 @@ int decompress(int argc, char *argv[]) {
 		string cmd = "rm -rf " + otarfn + ".tar " +  tarfd;	
 		system(cmd.c_str());
 
+	} else 
+	if (mode == "set") {
+		while ((oc = getopt(argc, argv, "dr:t:o:f:h")) >= 0) {
+			switch(oc) {
+				case 'd':
+					break;
+				case 'r':
+					reffd = optarg;
+					break;
+				case 't':
+					otarfn = optarg;
+					break;
+				case 'o':
+					objfd = optarg;
+					break;
+				case 'f':
+					namefn = optarg;
+					isnamefn = true;
+					break;
+				case 'h':
+					show_usage(argv[0]);
+					exit(0);
+				case '?':
+					fprintf(stderr, "Error parameters!\n");
+					exit(1);
+			}
+		}
+		// check the folder
+		DIR *tmpdir = opendir(reffd.c_str());
+		if (NULL == tmpdir) {
+			fprintf(stderr, "Reference folder '%s' does not exist.\n", reffd.c_str());
+			exit(1);
+		}
+		closedir(tmpdir);
+
+		f.open(otarfn);
+		if (f.fail()) {
+			fprintf(stderr, "Target file '%s' does not exist.\n", otarfn.c_str());
+			exit(1);
+		}
+		f.close();
+
+		if (isnamefn) {
+			dnlref.clear();
+			char *str0 = new char[1024], *str1 = new char[1024];
+			FILE *fpn = fopen(namefn.c_str(), "r");
+			while (fscanf(fpn, "%s%s", str0, str1) != EOF) {
+				dnlref.push_back(str0);
+				dnltar.push_back(str1);
+			}
+			fclose(fpn);
+			delete[] str0;
+			delete[] str1;
+		} else {
+			for (size_t i = 0; i < dnlref.size(); ++i) {
+				dnltar.push_back(dnlref[i]);
+			}
+		}
+		
+		// if (numdecomp == 0) {
+		// 	fprintf(stdout, "No files exist. Decompress nothing.\n");
+		// 	exit(0);
+		// }
+
+		int ret = mkdir(objfd.c_str(), 0777);//
+	    if (ret != 0) {
+			fprintf(stderr, "Create the folder '%s' failed!\n", objfd.c_str());
+			exit(1);
+	    }
+
+		memrgc::bsc::BSC_decompress(otarfn.c_str(), (otarfn + ".tar").c_str());
+
+		tarfd = generateString("memrgcdec", 10);
+		ret = mkdir(tarfd.c_str(), MODE); //
+	    if (ret != 0) {
+			fprintf(stderr, "Create template folder failed!\n");
+			exit(1);
+	    }
+
+	    // cmd = "tar -xf " + string(argv[1]) + " -C " + folder;
+	    string tarcmd = "tar -xf " + (otarfn + ".tar") + " -C " + tarfd;
+	    system(tarcmd.c_str());
+
+	    vector<string> tarsets;
+	    string listfn = tarfd + "/list";
+	    getList(listfn, tarsets);
+
+	    isdecomp = new bool[dnlref.size()];
+		int numdecomp = 0;
+		// check all files
+		for (size_t i = 0; i < dnlref.size(); ++i) {
+			isdecomp[i] = true;
+			reffn = reffd + "/" + dnlref[i];
+			f.open(reffn);
+			if (f.fail()) {
+				fprintf(stdout, "The reference file '%s' does not exist. This chromosome is ignored.\n", reffn.c_str());
+				isdecomp[i] = false;
+			} else {
+				f.close();
+			}
+			if (isdecomp[i]) ++ numdecomp;
+		}
+		string objfd1;
+		for (size_t t = 0; t < tarsets.size(); ++t) {
+			objfd1 = objfd + "/" + tarsets[t];
+			ret = mkdir(objfd1.c_str(), MODE); //
+		    if (ret != 0) {
+				fprintf(stderr, "Create folder failed!\n");
+				exit(1);
+		    }
+
+			for (size_t i = 0; i < dnlref.size(); ++i) {
+				if (isdecomp[i]) {
+					tarfn = tarfd + "/" + dnltar[i] + "/" + tarsets[t];
+					f.open(tarfn);
+					if (f.fail()) {
+						fprintf(stdout, "The compressed file '%s' does not exist. This chromosome is ignored.\n", tarfn.c_str());
+					} else {
+						f.close();
+					}
+					reffn = reffd + "/" + dnlref[i];
+					objfn = objfd1 + "/" + dnltar[i];
+					decompressChr(reffn, tarfn, objfn);
+				}
+			}
+
+		}
+		
+		string cmd = "rm -rf " + otarfn + ".tar " +  tarfd;	
+		system(cmd.c_str());
+
 	} else {
-		fprintf(stderr, "the value of m is not correct. only `file' and `genome' can be set.\n");
+		fprintf(stderr, "the value of m is not correct. only `file', `genome' and `set' can be set.\n");
 		exit(1);
 	}
 	return 0;
