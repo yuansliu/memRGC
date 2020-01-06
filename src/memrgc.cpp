@@ -1,3 +1,8 @@
+/* 
+ * Author: Yuansheng LIU @ UTS
+ * 
+ */
+
 #include <stdint.h>
 #include <stdio.h>
 # include <cstdlib>
@@ -24,6 +29,10 @@
 # include <sys/stat.h>
 # include <dirent.h>
 # include "kvec.h"
+# include "nthash.hpp"
+# include "BloomFilter.hpp"
+# include "ntHashIteratorSample.hpp"
+# include "ntHashIteratorSampleRef.hpp"
 # include "libbsc/bsc.h"
 
 using namespace std;
@@ -47,9 +56,13 @@ typedef struct match_t {
 	}
 
 } match_t;
-
+ 
 typedef struct { size_t n, m; match_t *a; } match_v;
 
+/* this function is changed from https://github.com/wbieniec/copmem/blob/master/CopMEM.src/CopMEM.cpp
+ * authors: Szymon Grabowski and Wojciech Bieniecki
+ * changes: read a chromosome
+ */
 Chromosome readChr(string fn, const char paddingChar = 123) {
 	// const char terminatorChar = 0;
 	// const char paddingChar = 125;
@@ -166,21 +179,22 @@ inline void addStrMap(StrMap *smap, string bases, uint32_t refidx) {
 	}
 }
 
-/*inline void delStrMap(StrMap *smap) {
+inline void delStrMap(StrMap *smap) {
 	StrMap::iterator iter = smap->begin();
-	vector<uint32_t> empty_vec;
-	StrMap empty_smap;
+	// vector<uint32_t> empty_vec;
+	// StrMap empty_smap;
 	while (iter != smap->end()) {
-		iter->second.swap(empty_vec);
+		// vector<uint32_t>().swap(iter->second);
 		iter->second.clear();
+		iter->second.shrink_to_fit();
 		++ iter;
 	}
-	smap->swap(empty_smap);
+	// smap->swap(empty_smap);
 	smap->clear();
 }
-*/
 
-inline void delStrMap(StrMap *smap) {
+
+/*inline void delStrMap(StrMap *smap) {
 	StrMap::iterator iter = smap->begin();
 	// vector<uint32_t> empty_vec;
 	// StrMap empty_smap;
@@ -191,7 +205,7 @@ inline void delStrMap(StrMap *smap) {
 	}
 	// smap->swap(empty_smap);
 	smap->clear();
-}
+}*/
 
 inline void constrctStrMap(Chromosome *chr, StrMap *smap, size_t step, int K) {
 	char *gen = std::get<1>(*chr) + 1, *src, *ori = gen;
@@ -218,6 +232,55 @@ inline void constrctStrMap(Chromosome *chr, StrMap *smap, size_t step, int K) {
 			addStrMap(smap, kmer, pos);
 		}
 	}
+	// cout << "number of sampled k-mers from reference: " << num << endl;
+}
+
+inline void constrctStrMap(Chromosome *chr, StrMap *smap, size_t step, int K, BloomFilter *bf, unsigned int numHashes) {
+	char *gen = std::get<1>(*chr) + 1, *src, *ori = gen;
+	uint32_t pos;
+	size_t seqSize = *std::get<2>(*chr);
+	bool con;
+
+	ntHashIteratorSampleRef riter(gen, numHashes, K, step, seqSize);
+
+	while (riter != riter.end()) {
+		con = bf->contains(*riter);
+		if (con) {
+			string kmer;
+			pos = riter.pos();
+			src = gen + pos;
+			for (size_t j = 0; j < K; ++j) {
+				kmer += (*src ++);
+			}
+			addStrMap(smap, kmer, pos);
+		}
+		++ riter;
+	}
+	delete bf;
+
+	// size_t num = 0;
+	// size_t *seqSize = std::get<2>(*chr);
+	// char *ends = gen + *seqSize - K + 1;
+	// size_t num = 0;
+	// int numberOfN;
+
+	// gen += step;
+	// while (gen <= ends) {
+	// 	string kmer;
+	// 	src = gen;
+	// 	gen += step;
+	// 	pos = (uint32_t)(src - ori);
+	// 	numberOfN = 0;
+	// 	for (size_t j = 0; j < K; ++j) {
+	// 		if (*src == 0x4E) 
+	// 			++numberOfN;
+	// 		kmer += (*src ++);
+	// 	}
+	// 	if (numberOfN <= K - 10) {
+	// 		++ num;
+	// 		addStrMap(smap, kmer, pos);
+	// 	}
+	// }
 	// cout << "number of sampled k-mers from reference: " << num << endl;
 }
 
@@ -370,6 +433,8 @@ inline size_t countMEMBases(Chromosome *tar, uint32_t *v) {
 	return tarSeqSize - membases;
 }
 
+int pv = 2, uv = 3;
+
 inline void MEMsExtend(uint32_t *v, Chromosome *ref, Chromosome *tar) {
 	char *targen = std::get<1>(*tar) + 1, *tarsrc, *tarend;
 	char *refgen = std::get<1>(*ref) + 1, *refsrc;
@@ -384,6 +449,7 @@ inline void MEMsExtend(uint32_t *v, Chromosome *ref, Chromosome *tar) {
 	int mismatchnum = 0;
 	bool isleftextend, isrightextend;
 	isleftextend = isrightextend = false;
+
 
 	while (i < tarSize) {
 		if (v[i-1] == 0 && v[i-1] != v[i]) {
@@ -400,7 +466,7 @@ inline void MEMsExtend(uint32_t *v, Chromosome *ref, Chromosome *tar) {
 
 			j = i - 1;
 			mismatchnum = 0;
-			while (j > 0 && mismatchnum < 20 && refsrc > refgen && (*tarsrc) != (*refsrc) && v[j] == 0) {
+			while (j > 0 && mismatchnum <= pv && refsrc > refgen && (*tarsrc) != (*refsrc) && v[j] == 0) {
 				-- tarsrc;
 				-- refsrc;
 				-- j;
@@ -418,7 +484,7 @@ inline void MEMsExtend(uint32_t *v, Chromosome *ref, Chromosome *tar) {
 			++ tarsrc;
 			++ refsrc;
 			tempMatchLength = tarright - tarsrc + 1;
-			if (tempMatchLength >= 5) {
+			if (tempMatchLength >= uv) {
 				refleftidx = refsrc - refgen + 1;
 
 				if (refleftidx == v[j]) {
@@ -444,7 +510,7 @@ inline void MEMsExtend(uint32_t *v, Chromosome *ref, Chromosome *tar) {
 			while (i < tarSize && v[beg] == v[i]) { // find the end of a match
 				++ i;
 			}
-			if (i >= tarSize - 5) break;
+			if (i >= tarSize - uv) break;
 
 			if (v[i] > 0) continue; // two close MEM 
 			// else v[i] == 0
@@ -461,7 +527,7 @@ inline void MEMsExtend(uint32_t *v, Chromosome *ref, Chromosome *tar) {
 			refsrc = refright;
 
 			mismatchnum = 0;
-			while (j < tarSize && mismatchnum < 20 && (*tarsrc) && (*refsrc) 
+			while (j < tarSize && mismatchnum <= pv && (*tarsrc) && (*refsrc) 
 				   && (*tarsrc) != (*refsrc) && v[j] == 0) {
 				++ tarsrc;
 				++ refsrc;
@@ -482,7 +548,7 @@ inline void MEMsExtend(uint32_t *v, Chromosome *ref, Chromosome *tar) {
 			}
 			tempMatchLength = refsrc - newrefbeg;
 
-			if (tempMatchLength >= 5) {
+			if (tempMatchLength >= uv) {
 				refleftidx = newrefbeg - refgen + 1;
 
 				if (refleftidx == v[j]) {
@@ -820,6 +886,25 @@ inline void encodeByOriSeq(Chromosome *ref, Chromosome *tar, uint32_t *v, string
 	// fprintf(stderr, "mismatchlen: %lu\n", mismatchlen);
 }
 
+BloomFilter *createBF(Chromosome *tar, int K, unsigned int s2, unsigned int &numHashes, uint32_t *v) {
+	size_t tarSeqSize = *(std::get<2>(*tar));
+	// size_t qseqlen = std::get<0>(*tar);
+	size_t qexpectedElemNum = (tarSeqSize - K + 1)/s2 + 1; //
+	double prob = 0.01; //fpr
+	BloomFilter *qbf = new BloomFilter(qexpectedElemNum, prob, 0, K);
+	numHashes = qbf->getHashNum();
+
+	char *targen = std::get<1>(*tar) + 1;
+	ntHashIteratorSample qiter(targen, numHashes, K, s2, tarSeqSize, v);
+	// cout << "before while()\n";
+	while (qiter != qiter.end()) {
+		// cout << "111\n";
+		qbf->insert(*qiter);
+		++qiter;
+	}
+	return qbf;
+}
+
 void compressChr(string reffn, string tarfn, string objfn) {
 	std::ofstream f;
 	f.open(objfn);
@@ -876,59 +961,89 @@ void compressChr(string reffn, string tarfn, string objfn) {
 	StrMap smap;
 	match_v mh;
 	size_t step;
+	unsigned int numHashes;
+	unsigned int s2;
+	BloomFilter *bf;
 
 	// 134217728
 	if (tarSeqSize > (1UL<<27) || (*(std::get<2>(ref)) > (1UL<<27))) {
 		K = 90;
 		step = 1000;
+
 		// first find very long matches 
-		constrctStrMap(&ref, &smap, step, K);
+		s2 = 999;
+		bf = createBF(&tar, K, s2, numHashes, v);
+		// cout << "after createBF()\n";
+		constrctStrMap(&ref, &smap, step, K, bf, numHashes);
 
-		findMEMs(v, &ref, &tar, &smap, &mh, 999, 999*step + K - 1, K); //10149
+		findMEMs(v, &ref, &tar, &smap, &mh, s2, s2*step + K - 1, K); //10149
 		sort(mh.a, mh.a + mh.n);
 		travelMEMs(&tar, v, &mh);
 		kv_destroy(mh);
 		MEMsExtend(v, &ref, &tar);
+		delStrMap(&smap);	
 
-		findMEMs(v, &ref, &tar, &smap, &mh, 499, 499*1000 + K - 1, K); // 499089
+		// cout << "one round\n";
+		// constrctStrMap(&ref, &smap, step, K);
+		// exit(0);
+		s2 = 499;
+		bf = createBF(&tar, K, s2, numHashes, v);
+		constrctStrMap(&ref, &smap, step, K, bf, numHashes);
+
+		findMEMs(v, &ref, &tar, &smap, &mh, s2, s2*step + K - 1, K); // 499089
 		sort(mh.a, mh.a + mh.n);
 		travelMEMs(&tar, v, &mh);
 		kv_destroy(mh);
 		MEMsExtend(v, &ref, &tar);
+		delStrMap(&smap);	
 
-		findMEMs(v, &ref, &tar, &smap, &mh, 49, 49*step + K - 1, K); // 49089
+		s2 = 49;
+		bf = createBF(&tar, K, s2, numHashes, v);
+		constrctStrMap(&ref, &smap, step, K, bf, numHashes);
+
+		findMEMs(v, &ref, &tar, &smap, &mh, s2, s2*step + K - 1, K); // 49089
 		sort(mh.a, mh.a + mh.n);
 		travelMEMs(&tar, v, &mh);
 		kv_destroy(mh);
 		MEMsExtend(v, &ref, &tar);
-
-		// smap.clear();
 		delStrMap(&smap);	
 	} else 
 	if (tarSeqSize > (1UL<<21)) {
 		K = 90;
 		step = 500;
 		// first find very long matches 
-		constrctStrMap(&ref, &smap, step, K);
+		// constrctStrMap(&ref, &smap, step, K);
+		s2 = 499;
+		bf = createBF(&tar, K, s2, numHashes, v);
+		constrctStrMap(&ref, &smap, step, K, bf, numHashes);
 
-		findMEMs(v, &ref, &tar, &smap, &mh, 499, 499*step + K - 1, K); //10149
+		findMEMs(v, &ref, &tar, &smap, &mh, s2, s2*step + K - 1, K); //10149
 		sort(mh.a, mh.a + mh.n);
 		travelMEMs(&tar, v, &mh);
 		kv_destroy(mh);
 		MEMsExtend(v, &ref, &tar);
+		delStrMap(&smap);
 
-		findMEMs(v, &ref, &tar, &smap, &mh, 49, 49*step + K - 1, K); // 499089
+		s2 = 49;
+		bf = createBF(&tar, K, s2, numHashes, v);
+		constrctStrMap(&ref, &smap, step, K, bf, numHashes);
+
+		findMEMs(v, &ref, &tar, &smap, &mh, s2, s2*step + K - 1, K); // 499089
 		sort(mh.a, mh.a + mh.n);
 		travelMEMs(&tar, v, &mh);
 		kv_destroy(mh);
 		MEMsExtend(v, &ref, &tar);
+		delStrMap(&smap);
 
-		findMEMs(v, &ref, &tar, &smap, &mh, 9, 9*step + K - 1, K); // 49089
+		s2 = 9;
+		bf = createBF(&tar, K, s2, numHashes, v);
+		constrctStrMap(&ref, &smap, step, K, bf, numHashes);
+
+		findMEMs(v, &ref, &tar, &smap, &mh, s2, s2*step + K - 1, K); // 49089
 		sort(mh.a, mh.a + mh.n);
 		travelMEMs(&tar, v, &mh);
 		kv_destroy(mh);
 		MEMsExtend(v, &ref, &tar);
-
 		delStrMap(&smap);
 	}
 	
@@ -941,57 +1056,86 @@ void compressChr(string reffn, string tarfn, string objfn) {
 			if (countMEMBases(&tar, v) < (1UL<<14)) break;
 			K = 30; ///????
 			step = 51;
-			constrctStrMap(&ref, &smap, step, K);
+			// constrctStrMap(&ref, &smap, step, K);
 
-			findMEMs(v, &ref, &tar, &smap, &mh, 49, 49*step + K - 1, K); // 2528
+			s2 = 49;
+			bf = createBF(&tar, K, s2, numHashes, v);
+			constrctStrMap(&ref, &smap, step, K, bf, numHashes);
+
+			findMEMs(v, &ref, &tar, &smap, &mh, s2, s2*step + K - 1, K); // 2528
 			sort(mh.a, mh.a + mh.n);
 			travelMEMs(&tar, v, &mh);
 			kv_destroy(mh);
 			MEMsExtend(v, &ref, &tar);
-
+			delStrMap(&smap);
+			// cout << "222xxx\n";
 			if (countMEMBases(&tar, v) < (1UL<<14)) break;
 
-			findMEMs(v, &ref, &tar, &smap, &mh, 16, 16*step + K - 1, K); // 845
+			s2 = 16;
+			bf = createBF(&tar, K, s2, numHashes, v);
+			constrctStrMap(&ref, &smap, step, K, bf, numHashes);
+
+			findMEMs(v, &ref, &tar, &smap, &mh, s2, s2*step + K - 1, K); // 845
 			sort(mh.a, mh.a + mh.n);
 			travelMEMs(&tar, v, &mh);
 			kv_destroy(mh);
 			MEMsExtend(v, &ref, &tar);
-
+			delStrMap(&smap);
+			// cout << "222xxx\n";
 			if (countMEMBases(&tar, v) < (1UL<<14)) break;
 
-			findMEMs(v, &ref, &tar, &smap, &mh, 7, 7*step + K - 1, K); // 386
+			s2 = 7;
+			bf = createBF(&tar, K, s2, numHashes, v);
+			constrctStrMap(&ref, &smap, step, K, bf, numHashes);
+
+			findMEMs(v, &ref, &tar, &smap, &mh, s2, s2*step + K - 1, K); // 386
 			sort(mh.a, mh.a + mh.n);
 			travelMEMs(&tar, v, &mh);
 			kv_destroy(mh);
 			MEMsExtend(v, &ref, &tar);
-
+			delStrMap(&smap);
+			// cout << "222xxx\n";
 			if (countMEMBases(&tar, v) < (1UL<<14)) break;
 
-			findMEMs(v, &ref, &tar, &smap, &mh, 1, 1*step + K - 1, K); // 80
+			// step = ;
+			s2 = 1;
+			bf = createBF(&tar, K, s2, numHashes, v);
+			constrctStrMap(&ref, &smap, step, K, bf, numHashes);
+
+			findMEMs(v, &ref, &tar, &smap, &mh, s2, s2*step + K - 1, K); // 80
 			sort(mh.a, mh.a + mh.n);
 			travelMEMs(&tar, v, &mh);
 			kv_destroy(mh);
 			MEMsExtend(v, &ref, &tar);
-
+			// cout << "222xxx\n";
 			delStrMap(&smap);
 		} while(0);
 	} else {
 		K = 30; ///????
 		step = 51;
-		constrctStrMap(&ref, &smap, step, K);
+		// constrctStrMap(&ref, &smap, step, K);
+		s2 = 40;
+		bf = createBF(&tar, K, s2, numHashes, v);
+		constrctStrMap(&ref, &smap, step, K, bf, numHashes);
 
-		findMEMs(v, &ref, &tar, &smap, &mh, 40, 40*step + K - 1, K); // 2528
+		findMEMs(v, &ref, &tar, &smap, &mh, s2, s2*step + K - 1, K); // 2528
 		sort(mh.a, mh.a + mh.n);
 		// cout << "mh.n: " << mh.n << endl;
 		travelMEMs(&tar, v, &mh);
 		kv_destroy(mh);
+		delStrMap(&smap);
 		// MEMsExtend(v, &ref, &tar);
 
-		findMEMs(v, &ref, &tar, &smap, &mh, 13, 13*step + K - 1, K); // 845
+		s2 = 13;
+		bf = createBF(&tar, K, s2, numHashes, v);
+		constrctStrMap(&ref, &smap, step, K, bf, numHashes);
+
+		findMEMs(v, &ref, &tar, &smap, &mh, s2, s2*step + K - 1, K); // 845
 		sort(mh.a, mh.a + mh.n);
 		// cout << "mh.n: " << mh.n << endl;
 		travelMEMs(&tar, v, &mh);
 		kv_destroy(mh);
+		delStrMap(&smap);
 		// MEMsExtend(v, &ref, &tar);
 
 		findMEMs(v, &ref, &tar, &smap, &mh, 1, 1*step + K - 1, K); // 845
@@ -1000,42 +1144,50 @@ void compressChr(string reffn, string tarfn, string objfn) {
 		travelMEMs(&tar, v, &mh);
 		kv_destroy(mh);
 		MEMsExtend(v, &ref, &tar);
-
 		delStrMap(&smap);
 
 		K = 20; ///????
 		step = 7;
-		constrctStrMap(&ref, &smap, step, K);
+		// constrctStrMap(&ref, &smap, step, K);
+		s2 = 5;
+		bf = createBF(&tar, K, s2, numHashes, v);
+		constrctStrMap(&ref, &smap, step, K, bf, numHashes);
 
-		findMEMs(v, &ref, &tar, &smap, &mh, 5, 5*step + K - 1, K); // 386
+		findMEMs(v, &ref, &tar, &smap, &mh, s2, s2*step + K - 1, K); // 386
+		sort(mh.a, mh.a + mh.n);
+		// cout << "mh.n: " << mh.n << endl;
+		travelMEMs(&tar, v, &mh);
+		kv_destroy(mh);
+		delStrMap(&smap);
+		// MEMsExtend(v, &ref, &tar);
+
+		s2 = 1;
+		bf = createBF(&tar, K, s2, numHashes, v);
+		constrctStrMap(&ref, &smap, step, K, bf, numHashes);
+
+		findMEMs(v, &ref, &tar, &smap, &mh, s2, s2*step + K - 1, K); // 386
 		sort(mh.a, mh.a + mh.n);
 		// cout << "mh.n: " << mh.n << endl;
 		travelMEMs(&tar, v, &mh);
 		kv_destroy(mh);
 		// MEMsExtend(v, &ref, &tar);
-
-		findMEMs(v, &ref, &tar, &smap, &mh, 1, 1*step + K - 1, K); // 386
-		sort(mh.a, mh.a + mh.n);
-		// cout << "mh.n: " << mh.n << endl;
-		travelMEMs(&tar, v, &mh);
-		kv_destroy(mh);
-		// MEMsExtend(v, &ref, &tar);
-
 		delStrMap(&smap);
 	}
-
-
+	// #endif
+	// cout << "over MEMs detection\n";
 	// 262144
 	size_t cntbases = countMEMBases(&tar, v);
 	// if (cntbases >= (1UL<<18) || (*std::get<2>(tar)) < (1Ul<<26)) {
 	if (cntbases >= (1UL<<18) || (*std::get<2>(tar)) < 50000000) {
 		K = 20;
 		step = 35;
+		s2 = 1;
 		
 		// if ((*std::get<2>(tar)) < (1Ul<<26)) {
 		if ((*std::get<2>(tar)) < 50000000) {
 			K = 15;
 			step = 5;
+			s2 = 1;
 		}
 
 		// if (tarSeqSize <= (1UL << 21)) {
@@ -1043,9 +1195,11 @@ void compressChr(string reffn, string tarfn, string objfn) {
 		// }
 		// cout << "K: " << K << "; step: " << step << endl;
 
-		constrctStrMap(&ref, &smap, step, K);
+		bf = createBF(&tar, K, s2, numHashes, v);
+		constrctStrMap(&ref, &smap, step, K, bf, numHashes);
+		// constrctStrMap(&ref, &smap, step, K);
 
-		findMEMs(v, &ref, &tar, &smap, &mh, 1, 1*step + K - 1, K); // 54
+		findMEMs(v, &ref, &tar, &smap, &mh, s2, s2*step + K - 1, K); // 54
 		// cout << "mh.n: " << mh.n << endl;
 		sort(mh.a, mh.a + mh.n);
 		travelMEMs(&tar, v, &mh);
@@ -1055,7 +1209,6 @@ void compressChr(string reffn, string tarfn, string objfn) {
 		delStrMap(&smap);
 
 	}
-
 	string e0;
 	e0.reserve((1UL<<22));
 	encodeByUpperCases(&ref, &tar, v, e0);
@@ -1463,6 +1616,63 @@ inline void multiTheradsCompressSet() {
 	threadVec.clear();
 }
 
+vector<string> tarchrsets;
+
+size_t getfilesize(string file) {
+	std::ifstream f0(file, std::ios::ate | std::ios::binary);
+	if (f0.fail()) {
+		std::cerr << "\nFile '" << file + "' does not exist. Quit.";
+		exit(1);
+	}
+	size_t N0 = f0.tellg();
+	return N0;
+}
+
+void multiTheradsCompressChrSetFun() {
+	string reffn, tarfn, objfn;
+	while (true) {
+		int i = __sync_fetch_and_add(&aid, 1);
+		if (i >= tarchrsets.size()) break;
+
+		tarfn = tarchrsets[i];
+
+		string smallobjfn = "";
+		size_t smallsize = getfilesize(tarfn);
+		for (int j = 1; j < 11; ++j) {
+			if (i - j >= 0) {
+				reffn = tarchrsets[i - j];
+				objfn = objfd + "/" + to_string(j) + "_" + to_string(i);
+				compressChr(reffn, tarfn, objfn);
+				size_t tmpsize = getfilesize(objfn);
+				if (tmpsize < smallsize) {
+					if ("" != smallobjfn) {
+						remove(smallobjfn.c_str());
+					}
+					smallsize = tmpsize;
+					smallobjfn = objfn;
+				} else {
+					remove(objfn.c_str());
+				}
+			}
+		}
+	}
+}
+
+inline void multiTheradsCompressChrSet() {
+	aid = 1; // the first is used as ref
+	std::vector<thread> threadVec;
+	if (tarchrsets.size() < nthreads) {
+		nthreads = tarchrsets.size();
+	}
+	for (int i = 0; i < nthreads; ++i) {
+		threadVec.push_back(std::thread(multiTheradsCompressChrSetFun));
+	}
+	std::for_each(threadVec.begin(), threadVec.end(), [](std::thread & thr) {
+		thr.join();
+	});
+	threadVec.clear();
+}
+
 static const char alphanum[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 inline std::string generateString(const std::string &chr, int length = 5) {
 	srand(time(0));
@@ -1668,7 +1878,7 @@ int compress(int argc, char *argv[]) {
 		objfd = generateString("memrgc", 10);
 		// cout << objfd << endl;
 
-		int ret = mkdir(objfd.c_str(), MODE);//创建目录
+		int ret = mkdir(objfd.c_str(), MODE);//
 	    if (ret != 0) {
 			fprintf(stderr, "Create template folder failed!\n");
 			exit(1);
@@ -1699,7 +1909,7 @@ int compress(int argc, char *argv[]) {
 
 		cmd = "rm -rf " + objfd + ".tar";	
 		system(cmd.c_str());
-	} 
+	} else  
 	if (mode == "set") {
 		while ((oc = getopt(argc, argv, "er:t:o:f:n:h")) >= 0) {
 			switch(oc) {
@@ -1867,12 +2077,90 @@ int compress(int argc, char *argv[]) {
 
 		cmd = "rm -rf " + objfd + ".tar";	
 		system(cmd.c_str());
+	} else 
+	if (mode == "chrset") {
+		while ((oc = getopt(argc, argv, "et:o:n:h")) >= 0) {
+			switch(oc) {
+				case 'e':
+					break;
+				case 't':
+					tarfn = optarg;
+					istar = true;
+					break;
+				case 'o':
+					fobjfn = optarg;
+					isobj = true;
+					break;
+				case 'n':
+					nthreads = atoi(optarg);
+					break;
+				case 'h':
+					show_usage(argv[0]);
+					exit(0);
+				case '?':
+					fprintf(stderr, "Error parameters!\n");
+					exit(1);
+			}
+		}
+		if (!istar || !isobj) {
+			fprintf(stderr, "Required parameters are not provided!\n");
+			exit(1);
+		}
+		if (!getList(tarfn, tarchrsets)) {
+			fprintf(stderr, "Open the target set file '%s' fail (not exist or empty file).\n", tarfn.c_str());
+			exit(1);
+		}
+		for (int i = 0; i < tarchrsets.size(); ++i) {
+			cout << tarchrsets[i] << endl;
+		}
+
+		objfd = generateString("memrgc", 10);
+		// cout << objfd << endl;
+
+		int ret = mkdir(objfd.c_str(), MODE);//
+	    if (ret != 0) {
+			fprintf(stderr, "Create template folder failed!\n");
+			exit(1);
+	    }
+	    multiTheradsCompressChrSet();
+	    FILE *fpname = fopen((objfd + "/name.txt").c_str(), "w");
+	    for (int i = 0; i < tarchrsets.size(); ++i) {
+	    	fprintf(fpname, "%s\n", tarchrsets[i].c_str());
+	    }
+	    fclose(fpname);
+
+	    string tarcmd = "tar -cf " + objfd + ".tar " + tarchrsets[0] + " -C " + objfd + " . ";
+		system(tarcmd.c_str());
+
+		string cmd = "rm -rf " + objfd;	
+		system(cmd.c_str());
+
+		memrgc::bsc::BSC_compress((objfd + ".tar").c_str(), fobjfn.c_str(), 256);
+
+		cmd = "rm -rf " + objfd + ".tar";	
+		system(cmd.c_str());
 	}
 	else {
 		fprintf(stderr, "the value of m is not correct. only `file', `genome' and `set' can be set.\n");
 		exit(1);
 	}
 	return 0;
+}
+
+bool checkName(char *fn) {
+	bool res = true;
+	while (*fn) {
+		if (!((*fn >= '0' && *fn <= '9') || *fn == '_')) {
+			res = false;
+			break;
+		}
+		++ fn;
+	}
+	return res;
+}
+
+bool paircmp(const pair<int, int> &a, const pair<int, int> &b) {
+	return a.first < b.first; // small value first
 }
 
 int decompress(int argc, char *argv[]) {
@@ -1885,7 +2173,6 @@ int decompress(int argc, char *argv[]) {
 		show_usage(argv[0]);
 		return 0;
 	}
- 	// cout << "xxxx\n";
 
 	std::ifstream f;
 	bool isnamefn = false;
@@ -2030,7 +2317,7 @@ int decompress(int argc, char *argv[]) {
 		memrgc::bsc::BSC_decompress(otarfn.c_str(), (otarfn + ".tar").c_str());
 
 		tarfd = generateString("memrgcdec", 10);
-		ret = mkdir(tarfd.c_str(), MODE);//创建目录
+		ret = mkdir(tarfd.c_str(), MODE);//
 	    if (ret != 0) {
 			fprintf(stderr, "Create template folder failed!\n");
 			exit(1);
@@ -2197,6 +2484,98 @@ int decompress(int argc, char *argv[]) {
 		string cmd = "rm -rf " + otarfn + ".tar " +  tarfd;	
 		system(cmd.c_str());
 
+	} else 
+	if (mode == "chrset") {
+		while ((oc = getopt(argc, argv, "dt:o:h")) >= 0) {
+			switch(oc) {
+				case 'd':
+					break;
+				case 't':
+					otarfn = optarg;
+					break;
+				case 'o':
+					objfd = optarg;
+					break;
+				case 'h':
+					show_usage(argv[0]);
+					exit(0);
+				case '?':
+					fprintf(stderr, "Error parameters!\n");
+					exit(1);
+			}
+		}
+
+		f.open(otarfn);
+		if (f.fail()) {
+			fprintf(stderr, "Target file '%s' does not exist.\n", otarfn.c_str());
+			exit(1);
+		}
+		f.close();
+
+		memrgc::bsc::BSC_decompress(otarfn.c_str(), (otarfn + ".tar").c_str());
+
+		tarfd = generateString("memrgcdec", 10);
+		int ret = mkdir(tarfd.c_str(), MODE); //
+	    if (ret != 0) {
+			fprintf(stderr, "Create template folder failed!\n");
+			exit(1);
+	    }
+
+	    // cmd = "tar -xf " + string(argv[1]) + " -C " + folder;
+	    string tarcmd = "tar -xf " + (otarfn + ".tar") + " -C " + tarfd;
+	    system(tarcmd.c_str());
+		// check the folder
+		DIR *tmpdir = opendir(tarfd.c_str());
+		if (NULL == tmpdir) {
+			fprintf(stderr, "folder '%s' does not exist.\n", tarfd.c_str());
+			exit(1);
+		} 
+		// not null
+		struct dirent *dir;
+		vector <pair<int, int> > vp;
+		int a, b;
+		while ((dir = readdir(tmpdir)) != NULL) {
+			// dir->d_name
+			if (strcmp(dir->d_name, ".") == 0 || 
+				strcmp(dir->d_name, "..") == 0 ||
+				checkName(dir->d_name) == false)    ///current dir OR parrent dir
+		        continue;
+		    sscanf(dir->d_name, "%d_%d", &a, &b);
+		    vp.push_back(make_pair(b, a));
+		}
+		closedir(tmpdir);
+
+		sort(vp.begin(), vp.end(), paircmp);
+		for (int i = 0; i < vp.size(); ++i) {
+			cout << vp[i].first << ", " << vp[i].second << endl;
+		}
+
+		ret = mkdir(objfd.c_str(), 0777);//
+	    if (ret != 0) {
+			fprintf(stderr, "Create the folder '%s' failed!\n", objfd.c_str());
+			exit(1);
+	    }
+
+	    string listfn = tarfd + "/name.txt";
+	    if (!getList(listfn, tarchrsets)) {
+			fprintf(stderr, "Open the target set file '%s' fail (not exist or empty file).\n", tarfn.c_str());
+			exit(1);
+		}
+
+		string cmd = "mv " + tarfd + "/" + tarchrsets[0] + " " + objfd + "/" + tarchrsets[0];
+		cout << cmd << endl;
+		system(cmd.c_str());
+
+		for (int i = 0; i < vp.size(); ++i) {
+			reffn = objfd + "/" + tarchrsets[vp[i].first - vp[i].second];
+			tarfn = tarfd + "/" + to_string(vp[i].second) + "_" + to_string(vp[i].first);
+			objfn = objfd + "/" + tarchrsets[vp[i].first];
+			decompressChr(reffn, tarfn, objfn);
+		}
+		
+		cmd = "rm -rf " + otarfn + ".tar " +  tarfd;	
+		system(cmd.c_str());
+
 	} else {
 		fprintf(stderr, "the value of m is not correct. only `file', `genome' and `set' can be set.\n");
 		exit(1);
@@ -2206,7 +2585,7 @@ int decompress(int argc, char *argv[]) {
 
 int main(int argc, char *argv[]) {
 	// cout << "argc: " << argc << endl;
-	if (argc < 10) {
+	if (argc < 8) {
 		show_usage(argv[0]);
 		exit(0);
 	}
