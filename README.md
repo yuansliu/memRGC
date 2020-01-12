@@ -17,6 +17,8 @@ Two fasta files are stored in testData.
 
 	./memrgc <e|d> -m <mode> -r <reference> -t <target> -o <output> [options]
 
+	e	for compression
+	d	for decompression
 	-m  	mode; 'file' compress a single file; 'genome' compress a genome; 'set' compress a genome set
 	-r  	reference file or genome
 	-t  	target file or genome
