@@ -404,18 +404,20 @@ inline void travelMEMs(Chromosome *tar, uint32_t *v, match_v *mh) {
 
 			if (flag) {
 				taridx = tmh.tarleft - targen;
+				if (v[taridxend] == 0 || (v[taridxend] > 0 && v[taridxend] != v[taridx - 1] + 1)) {
 
-				if (v[taridxend] == tmh.refleftidx + 1) {
-					-- taridxend;
-				}
-				if (v[taridx - 1] == tmh.refleftidx + 1) {
-					++ taridx;
-					++ tmh.refleftidx;
-				}
+					if (v[taridxend] == tmh.refleftidx + 1) {
+						-- taridxend;
+					}
+					if (v[taridx - 1] == tmh.refleftidx + 1) {
+						++ taridx;
+						++ tmh.refleftidx;
+					}
 
-				while (taridx < taridxend) {
-					v[taridx] = tmh.refleftidx + 1;
-					++ taridx;
+					while (taridx < taridxend) {
+						v[taridx] = tmh.refleftidx + 1;
+						++ taridx;
+					}
 				}
 			} 
 		}
