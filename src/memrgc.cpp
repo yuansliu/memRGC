@@ -1496,7 +1496,7 @@ int decompressChr(string reffn, string tarfn, string objfn) {
 		}
 		++ tarpos;
 	}
-	fprintf(fpout, "\n");
+	if (len > 0)	fprintf(fpout, "\n");
 	fclose(fpout);
 
 	delete[] tarseq;
